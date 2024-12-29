@@ -196,56 +196,43 @@ pub fn collect_struct(ast: &syn::File, result: &mut Vec<RustStruct>) {
         if let Item::Union(t) = item {
             let struct_name = t.ident.to_string();
             let fields = collect_fields(&t.fields);
-
-            result.push(RustStruct {
-                struct_name,
-                fields,
-                is_union: true,
-            });
+            result.push(RustStruct { struct_name, fields, explicit_size: None, is_union: true });
         } else if let Item::Struct(t) = item {
             let mut repr = false;
+            let mut explicit_size = None;
+            // let mut explicit_layout = false;
             for attr in &t.attrs {
                 let last_segment = attr.path().segments.last().unwrap();
                 if last_segment.ident == "repr" {
                     repr = true;
+                } else if last_segment.ident == "ensure_layout" {
+                    repr = true;
+                    explicit_size = match riri_mod_tools::ensure_layout::get_struct_size(attr) {
+                        Ok(v) => v,
+                        Err(_) => None
+                    };
+                    // explicit_layout = true;
                 }
             }
-
             if repr {
                 if let syn::Fields::Named(f) = &t.fields {
                     let struct_name = t.ident.to_string();
                     let fields = collect_fields(f);
-                    result.push(RustStruct {
-                        struct_name,
-                        fields,
-                        is_union: false,
-                    });
+                    result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
                 } else if let syn::Fields::Unnamed(f) = &t.fields {
                     let struct_name = t.ident.to_string();
                     let fields = collect_fields_unnamed(f);
-                    result.push(RustStruct {
-                        struct_name,
-                        fields,
-                        is_union: false,
-                    });
+                    result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
                 } else if let syn::Fields::Unit = &t.fields {
                     let struct_name = t.ident.to_string();
                     let fields: Vec<FieldMember> = Vec::new();
-                    result.push(RustStruct {
-                        struct_name,
-                        fields,
-                        is_union: false,
-                    });
+                    result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
                 }
             } else {
                 // non #[repr(?)] struct, treat as Unit struct
                 let struct_name = t.ident.to_string();
                 let fields: Vec<FieldMember> = Vec::new();
-                result.push(RustStruct {
-                    struct_name,
-                    fields,
-                    is_union: false,
-                });
+                result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
             }
         }
     }
@@ -256,10 +243,20 @@ fn collect_fields(fields: &syn::FieldsNamed) -> Vec<FieldMember> {
 
     for field in &fields.named {
         if let Some(x) = &field.ident {
+            let mut offset = None;
+            for attr in &field.attrs {
+                if attr.meta.path().is_ident("field_offset") {
+                    offset = match riri_mod_tools::ensure_layout::get_field_offset(attr) {
+                        Ok(v) => Some(v),
+                        Err(_) => None
+                    };
+                }
+            }
             let t = parse_type(&field.ty);
             result.push(FieldMember {
                 name: x.to_string(),
                 rust_type: t,
+                offset
             });
         }
     }
@@ -276,8 +273,9 @@ fn collect_fields_unnamed(fields: &syn::FieldsUnnamed) -> Vec<FieldMember> {
         let name = format!("Item{i}");
         let t = parse_type(&field.ty);
         result.push(FieldMember {
-            name: name,
+            name,
             rust_type: t,
+            offset: None
         });
     }
 

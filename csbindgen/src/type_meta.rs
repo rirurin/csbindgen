@@ -27,6 +27,7 @@ pub struct Parameter {
 pub struct FieldMember {
     pub name: String,
     pub rust_type: RustType,
+    pub offset: Option<usize>
 }
 
 #[derive(Clone, Debug)]
@@ -108,6 +109,8 @@ pub struct RustStruct {
     pub struct_name: String,
     pub fields: Vec<FieldMember>,
     pub is_union: bool,
+    pub explicit_size: Option<usize>,
+    // pub explicit_layout: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -338,7 +341,8 @@ impl RustType {
                 if emit_from_struct && !options.csharp_use_function_pointer {
                     sb.push_str("void*");
                 } else if options.csharp_use_function_pointer {
-                    sb.push_str("delegate* unmanaged[Cdecl]");
+                    // sb.push_str("delegate* unmanaged[Cdecl]");
+                    sb.push_str(&format!("delegate* unmanaged[{}]", options.calling_convention_type_fnptr));
                     sb.push('<');
                     for p in parameters {
                         sb.push_str(&p.rust_type.to_csharp_string(

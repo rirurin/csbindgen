@@ -16,6 +16,8 @@ pub struct Builder {
 pub struct BindgenOptions {
     pub input_bindgen_files: Vec<PathBuf>,
     pub input_extern_files: Vec<PathBuf>,
+    pub input_bindgen: Vec<syn::File>,
+    pub input_extern: Vec<syn::File>,
     pub method_filter: fn(method_name: String) -> bool,
     pub rust_method_type_path: String,
     pub rust_method_prefix: String,
@@ -37,6 +39,9 @@ pub struct BindgenOptions {
     pub csharp_file_header: String,
     pub csharp_file_footer: String,
     pub always_included_types: Vec<String>,
+    pub csharp_make_extern_delegates: Option<fn(method_name: &str) -> bool>,
+    pub calling_convention_type_dllimport: String,
+    pub calling_convention_type_fnptr: String,
 }
 
 impl Default for Builder {
@@ -45,6 +50,8 @@ impl Default for Builder {
             options: BindgenOptions {
                 input_bindgen_files: vec![],
                 input_extern_files: vec![],
+                input_bindgen: vec![],
+                input_extern: vec![],
                 method_filter: |x| !x.starts_with('_'),
                 rust_method_type_path: "".to_string(),
                 rust_method_prefix: "csbindgen_".to_string(),
@@ -66,6 +73,9 @@ impl Default for Builder {
                 csharp_file_header: "".to_string(),
                 csharp_file_footer: "".to_string(),
                 always_included_types: vec![],
+                csharp_make_extern_delegates: None,
+                calling_convention_type_dllimport: "Cdecl".to_owned(),
+                calling_convention_type_fnptr: "Cdecl".to_owned(),
             },
         }
     }
@@ -87,6 +97,18 @@ impl Builder {
         self.options
             .input_extern_files
             .push(input_extern_file.as_ref().to_path_buf());
+        self
+    }
+
+    /// Add input source code as an AST tree to generate binding
+    pub fn input_bindgen(mut self, input_bindgen: syn::File) -> Builder {
+        self.options.input_bindgen.push(input_bindgen);
+        self
+    }
+
+    /// Add input source code as an AST tree to collect extern methods to C# binding
+    pub fn input_extern(mut self, input_extern: syn::File) -> Builder {
+        self.options.input_extern.push(input_extern);
         self
     }
 
@@ -241,6 +263,31 @@ impl Builder {
         self
     }
 
+    /// Make delegate types for extern functions (used for Reloaded-II hooks)
+    pub fn csharp_make_extern_delegates(mut self, csharp_make_extern_delegates: Option<fn(method_name: &str) -> bool>) -> Builder {
+        self.options.csharp_make_extern_delegates = csharp_make_extern_delegates;
+        self
+    }
+
+    /// Set a custom calling convention for DllImport
+    pub fn calling_convention_type(mut self, calling_convention_type: String) -> Builder {
+        self.options.calling_convention_type_dllimport = calling_convention_type.clone();
+        self.options.calling_convention_type_fnptr = calling_convention_type;
+        self
+    }
+
+    /// calling_convention_type for DllImport only (e.g Stdcall has different capitalization)
+    pub fn calling_convention_type_dllimport(mut self, calling_convention_type: String) -> Builder {
+        self.options.calling_convention_type_dllimport = calling_convention_type;
+        self
+    }
+
+    /// calling_convention_type for function pointers only (e.g Stdcall has different capitalization)
+    pub fn calling_convention_type_fnptr(mut self, calling_convention_type: String) -> Builder {
+        self.options.calling_convention_type_fnptr = calling_convention_type;
+        self
+    }
+
     pub fn generate_csharp_file<P: AsRef<Path>>(
         &self,
         csharp_output_path: P,
@@ -265,10 +312,12 @@ impl Builder {
     }
 
     fn has_input_files(&self) -> bool {
-        !self.options.input_bindgen_files.is_empty()
+        !self.options.input_bindgen_files.is_empty() ||
+        !self.options.input_bindgen.is_empty()
     }
     fn has_input_externals(&self) -> bool {
-        !self.options.input_extern_files.is_empty()
+        !self.options.input_extern_files.is_empty() ||
+        !self.options.input_extern.is_empty()
     }
 
     pub fn generate_to_file<P: AsRef<Path>>(

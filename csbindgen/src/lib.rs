@@ -25,9 +25,11 @@ pub(crate) fn generate(
     generate_kind: GenerateKind,
     options: &BindgenOptions,
 ) -> Result<(Option<String>, String), Box<dyn Error>> {
-    let (paths, generate_rust) = match generate_kind {
-        GenerateKind::InputBindgen => (options.input_bindgen_files.as_slice(), true),
-        GenerateKind::InputExtern => (options.input_extern_files.as_slice(), false),
+    let (paths, trees, generate_rust) = match generate_kind {
+        GenerateKind::InputBindgen => 
+            (options.input_bindgen_files.as_slice(), options.input_bindgen.as_slice(), true),
+        GenerateKind::InputExtern => 
+            (options.input_extern_files.as_slice(), options.input_extern.as_slice(), false),
     };
 
     let mut methods: Vec<ExternMethod> = vec![];
@@ -36,11 +38,7 @@ pub(crate) fn generate(
     let mut enums: Vec<RustEnum> = vec![];
     let mut consts: Vec<RustConst> = vec![];
 
-    for path in paths {
-        let file_content = std::fs::read_to_string(path)
-            .unwrap_or_else(|_| panic!("input file not found, path: {}", path.display()));
-        let file_ast = syn::parse_file(file_content.as_str())?;
-
+    let mut collect_syntax = |file_ast: &syn::File| {
         match generate_kind {
             GenerateKind::InputBindgen => collect_foreign_method(&file_ast, options, &mut methods),
             GenerateKind::InputExtern => collect_extern_method(&file_ast, options, &mut methods),
@@ -48,9 +46,18 @@ pub(crate) fn generate(
         collect_type_alias(&file_ast, &mut aliases);
         collect_struct(&file_ast, &mut structs);
         collect_enum(&file_ast, &mut enums);
+        collect_const(&file_ast, &mut consts,options.csharp_generate_const_filter); 
+    };
 
-        collect_const(&file_ast, &mut consts,options.csharp_generate_const_filter);
-       
+    for path in paths {
+        let file_content = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("input file not found, path: {}", path.display()));
+        let file_ast = syn::parse_file(file_content.as_str())?;
+        collect_syntax(&file_ast);
+    }
+
+    for ast in trees {
+        collect_syntax(&ast);
     }
 
     // collect using_types
@@ -75,7 +82,7 @@ pub(crate) fn generate(
                 &struct_type_normalized,
                 &field.rust_type,
             );
-        }
+        } 
     }
 
     using_types.extend(options.always_included_types.iter().cloned());
@@ -201,7 +208,7 @@ mod tests {
         file.write_all(new_toml.as_bytes()).unwrap();
         file.flush().unwrap();
     }
-
+    #[allow(dead_code)]
     fn compare_and_delete_files(original_file_path: &str, generated_file_path: &str) {
                 let original = fs::read_to_string(original_file_path)
             .expect("Should have been able to read original file");

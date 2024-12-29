@@ -128,7 +128,7 @@ pub fn emit_csharp(
                 &"return".to_string(),
             ) {
                 method_list_string.push_str(
-                    format!("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]\n")
+                    format!("        [UnmanagedFunctionPointer(CallingConvention.{})]\n", options.calling_convention_type_dllimport)
                         .as_str(),
                 );
                 method_list_string
@@ -145,7 +145,7 @@ pub fn emit_csharp(
                 &p.name,
             ) {
                 method_list_string.push_str(
-                    format!("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]\n")
+                    format!("        [UnmanagedFunctionPointer(CallingConvention.{})]\n", options.calling_convention_type_dllimport)
                         .as_str(),
                 );
                 method_list_string
@@ -190,7 +190,8 @@ pub fn emit_csharp(
         }
 
         method_list_string.push_str_ln(
-            format!("        [DllImport(__DllName, EntryPoint = \"{entry_point}\", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]").as_str(),
+            format!("        [DllImport(__DllName, EntryPoint = \"{entry_point}\", CallingConvention = CallingConvention.{}, ExactSpelling = true)]",
+            options.calling_convention_type_dllimport).as_str(),
         );
         if return_type == "bool" {
             method_list_string.push_str_ln("        [return: MarshalAs(UnmanagedType.U1)]");
@@ -199,25 +200,39 @@ pub fn emit_csharp(
             format!("        {accessibility} static extern {return_type} {method_prefix}{method_name}({parameters});").as_str(),
         );
         method_list_string.push('\n');
+        if let Some(f) = options.csharp_make_extern_delegates {
+            if f(method_name) {
+                method_list_string.push_str_ln(
+                    format!("        {accessibility} delegate {return_type} {method_prefix}{method_name}Delegate({parameters});").as_str()
+                );
+                method_list_string.push('\n');
+            }
+        }
     }
 
     let mut structs_string = String::new();
     for item in structs {
         let name = (options.csharp_type_rename)(escape_csharp_name(&item.struct_name));
+
         let layout_kind = if item.is_union {
-            "Explicit"
+            "LayoutKind.Explicit".to_owned()
+        } else if item.explicit_size == None {
+            "LayoutKind.Sequential".to_owned()
         } else {
-            "Sequential"
+            format!("LayoutKind.Explicit, Size = {}", item.explicit_size.unwrap())
         };
 
         structs_string
-            .push_str_ln(format!("    [StructLayout(LayoutKind.{layout_kind})]").as_str());
+            .push_str_ln(format!("    [StructLayout({layout_kind})]").as_str());
         structs_string
             .push_str_ln(format!("    {accessibility} unsafe partial struct {name}").as_str());
         structs_string.push_str_ln("    {");
         for field in &item.fields {
             if item.is_union {
                 structs_string.push_str_ln("        [FieldOffset(0)]");
+            }
+            if let Some(ofs) = field.offset {
+                structs_string.push_str_ln(format!("        [FieldOffset({})]", ofs).as_str());
             }
 
             let type_name = field.rust_type.to_csharp_string(

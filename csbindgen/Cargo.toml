@@ -14,3 +14,4 @@ repository = "https://github.com/Cysharp/csbindgen/"
 [dependencies]
 syn = { version = "2.0.68", features = ["full", "parsing"] }
 regex = "1.10.5"
+riri-mod-tools = { path = "../../riri-mod-tools/riri-mod-tools" }
