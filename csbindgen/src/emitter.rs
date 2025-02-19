@@ -202,10 +202,70 @@ pub fn emit_csharp(
         method_list_string.push('\n');
         if let Some(f) = options.csharp_make_extern_delegates {
             if f(method_name) {
-                method_list_string.push_str_ln(
-                    format!("        {accessibility} delegate {return_type} {method_prefix}{method_name}Delegate({parameters});").as_str()
-                );
-                method_list_string.push('\n');
+                match options.reloaded_hooks_inject_assembly_attribute {
+                    Some(v) => {
+                        match v(method_name) {
+                            Some(v) => {
+                                fn emit_reloaded_assembly_delegate(
+                                    entry: &crate::custom_attribute::AssemblyFunctionHookData,
+                                    method_list_string: &mut String,
+                                    accessibility: &String,
+                                    return_type: &String,
+                                    method_prefix: &String,
+                                    method_name: &String,
+                                    parameters: &String
+                                ) {
+                                    method_list_string.push_str(        "[Reloaded.Hooks.Definitions.X64.Function([ ");
+                                    if entry.registers.len() > 1 {
+                                        for (i, parm) in entry.registers[..entry.registers.len() - 1].iter().enumerate() {
+                                            method_list_string.push_str(format!("Reloaded.Hooks.Definitions.X64.FunctionAttribute.Register.{}", parm).as_str());
+                                            if i != entry.registers.len() - 2 { method_list_string.push_str(", "); }
+                                        }
+                                        method_list_string.push_str(format!(" ], Reloaded.Hooks.Definitions.X64.FunctionAttribute.Register.{},", entry.registers[entry.registers.len() - 1]).as_str());
+                                    } else { // no parameters, return param only
+                                        method_list_string.push_str(format!(" ], Reloaded.Hooks.Definitions.X64.FunctionAttribute.Register.{},", entry.registers[0]).as_str());
+                                    }
+                                    // shadow space
+                                    match entry.allocate_shadow_space {
+                                        true => method_list_string.push_str(" true"),
+                                        false => method_list_string.push_str(" false"),
+                                    };
+                                    // callee saved registers
+                                    if !entry.callee_saved_registers.is_empty() {
+                                        method_list_string.push_str(", [ ");
+                                        for (i, parm) in entry.callee_saved_registers.iter().enumerate() {
+                                            method_list_string.push_str(format!("Reloaded.Hooks.Definitions.X64.FunctionAttribute.Register.{}", parm).as_str());
+                                            if i != entry.callee_saved_registers.len() - 1 { method_list_string.push_str(", "); }
+                                        }
+                                        method_list_string.push_str(" ]");
+                                    }
+                                    method_list_string.push_str(" )]");
+                                    method_list_string.push('\n');
+                                    let delegate_suffix = &entry.suffix;
+                                    method_list_string.push_str_ln(
+                                        format!("        {accessibility} delegate {return_type} {method_prefix}{method_name}Delegate{delegate_suffix}({parameters});").as_str()
+                                    );
+                                    method_list_string.push('\n');
+                                }
+                                for e in &v.0 {
+                                    emit_reloaded_assembly_delegate(&e, &mut method_list_string, accessibility, &return_type, method_prefix, method_name, &parameters);
+                                }
+                            },
+                            None => {
+                                method_list_string.push_str_ln(
+                                    format!("        {accessibility} delegate {return_type} {method_prefix}{method_name}Delegate({parameters});").as_str()
+                                );
+                                method_list_string.push('\n');
+                            }
+                        }
+                    },
+                    None => {
+                        method_list_string.push_str_ln(
+                            format!("        {accessibility} delegate {return_type} {method_prefix}{method_name}Delegate({parameters});").as_str()
+                        );
+                        method_list_string.push('\n');
+                    }
+                }
             }
         }
     }

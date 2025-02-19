@@ -7,7 +7,11 @@ use std::{
 };
 use std::convert::identity;
 
-use crate::{generate, GenerateKind};
+use crate::{
+    custom_attribute::AssemblyFunctionHook,
+    generate, 
+    GenerateKind
+};
 
 pub struct Builder {
     options: BindgenOptions,
@@ -42,6 +46,7 @@ pub struct BindgenOptions {
     pub csharp_make_extern_delegates: Option<fn(method_name: &str) -> bool>,
     pub calling_convention_type_dllimport: String,
     pub calling_convention_type_fnptr: String,
+    pub reloaded_hooks_inject_assembly_attribute: Option<fn(method_name: &str) -> Option<AssemblyFunctionHook<'_>>>,
 }
 
 impl Default for Builder {
@@ -76,6 +81,7 @@ impl Default for Builder {
                 csharp_make_extern_delegates: None,
                 calling_convention_type_dllimport: "Cdecl".to_owned(),
                 calling_convention_type_fnptr: "Cdecl".to_owned(),
+                reloaded_hooks_inject_assembly_attribute: None
             },
         }
     }
@@ -285,6 +291,13 @@ impl Builder {
     /// calling_convention_type for function pointers only (e.g Stdcall has different capitalization)
     pub fn calling_convention_type_fnptr(mut self, calling_convention_type: String) -> Builder {
         self.options.calling_convention_type_fnptr = calling_convention_type;
+        self
+    }
+
+    /// For injecting Reloaded-II's FunctionAttribute into delegates associated with assembly hooks
+    /// See https://reloaded-project.github.io/Reloaded-II/CheatSheet/CallingHookingGameFunctions/
+    pub fn reloaded_hooks_inject_assembly_attribute(mut self, reloaded_hooks_inject_assembly_attribute: Option<fn(method_name: &str) -> Option<AssemblyFunctionHook<'_>>>) -> Builder {
+        self.options.reloaded_hooks_inject_assembly_attribute = reloaded_hooks_inject_assembly_attribute;
         self
     }
 

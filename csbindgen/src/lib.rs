@@ -1,5 +1,6 @@
 mod alias_map;
 mod builder;
+pub mod custom_attribute;
 mod emitter;
 mod field_map;
 mod parser;
