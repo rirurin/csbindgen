@@ -47,6 +47,7 @@ pub struct BindgenOptions {
     pub calling_convention_type_dllimport: String,
     pub calling_convention_type_fnptr: String,
     pub reloaded_hooks_inject_assembly_attribute: Option<fn(method_name: &str) -> Option<AssemblyFunctionHook<'_>>>,
+    pub treat_pointer_types_as_nint: bool,
 }
 
 impl Default for Builder {
@@ -81,7 +82,8 @@ impl Default for Builder {
                 csharp_make_extern_delegates: None,
                 calling_convention_type_dllimport: "Cdecl".to_owned(),
                 calling_convention_type_fnptr: "Cdecl".to_owned(),
-                reloaded_hooks_inject_assembly_attribute: None
+                reloaded_hooks_inject_assembly_attribute: None,
+                treat_pointer_types_as_nint: false
             },
         }
     }
@@ -298,6 +300,13 @@ impl Builder {
     /// See https://reloaded-project.github.io/Reloaded-II/CheatSheet/CallingHookingGameFunctions/
     pub fn reloaded_hooks_inject_assembly_attribute(mut self, reloaded_hooks_inject_assembly_attribute: Option<fn(method_name: &str) -> Option<AssemblyFunctionHook<'_>>>) -> Builder {
         self.options.reloaded_hooks_inject_assembly_attribute = reloaded_hooks_inject_assembly_attribute;
+        self
+    }
+
+    /// configure if pointer and reference types get defined in C# using their Rust type name
+    /// or as an "untyped" nint
+    pub fn treat_pointer_types_as_nint(mut self, treat_pointer_types_as_nint: bool) -> Builder {
+        self.options.treat_pointer_types_as_nint = treat_pointer_types_as_nint;
         self
     }
 

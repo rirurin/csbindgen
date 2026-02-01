@@ -89,7 +89,7 @@ fn parse_method(item: FnItem, options: &BindgenOptions) -> Option<ExternMethod> 
                 parameter_name = ident.ident.to_string();
             }
 
-            let rust_type = parse_type(&t.ty);
+            let rust_type = parse_type(&t.ty, options.treat_pointer_types_as_nint);
             if rust_type.type_name.is_empty() {
                 println!("csbindgen can't handle this parameter type so ignore generate, method_name: {} parameter_name: {}", method_name, parameter_name);
                 return None;
@@ -104,7 +104,7 @@ fn parse_method(item: FnItem, options: &BindgenOptions) -> Option<ExternMethod> 
 
     // return
     if let ReturnType::Type(_, b) = &sig.output {
-        let rust_type = parse_type(b);
+        let rust_type = parse_type(b, options.treat_pointer_types_as_nint);
         if rust_type.type_name.is_empty() {
             println!(
                 "csbindgen can't handle this return type so ignore generate, method_name: {}",
@@ -166,11 +166,11 @@ fn parse_method(item: FnItem, options: &BindgenOptions) -> Option<ExternMethod> 
     None
 }
 
-pub fn collect_type_alias(ast: &syn::File, result: &mut AliasMap) {
+pub fn collect_type_alias(ast: &syn::File, result: &mut AliasMap, ptr_as_nint: bool) {
     for item in depth_first_module_walk(&ast.items) {
         if let Item::Type(t) = item {
             let name = t.ident.to_string();
-            let alias = parse_type(&t.ty);
+            let alias = parse_type(&t.ty, ptr_as_nint);
             result.insert(&name, &alias);
         } else if let Item::Use(t) = item {
             if let syn::UseTree::Path(t) = &t.tree {
@@ -190,12 +190,12 @@ pub fn collect_type_alias(ast: &syn::File, result: &mut AliasMap) {
     }
 }
 
-pub fn collect_struct(ast: &syn::File, result: &mut Vec<RustStruct>) {
+pub fn collect_struct(ast: &syn::File, result: &mut Vec<RustStruct>, ptr_as_nint: bool) {
     // collect union or struct
     for item in depth_first_module_walk(&ast.items) {
         if let Item::Union(t) = item {
             let struct_name = t.ident.to_string();
-            let fields = collect_fields(&t.fields);
+            let fields = collect_fields(&t.fields, ptr_as_nint);
             result.push(RustStruct { struct_name, fields, explicit_size: None, is_union: true });
         } else if let Item::Struct(t) = item {
             let mut repr = false;
@@ -207,21 +207,17 @@ pub fn collect_struct(ast: &syn::File, result: &mut Vec<RustStruct>) {
                     repr = true;
                 } else if last_segment.ident == "ensure_layout" {
                     repr = true;
-                    explicit_size = match riri_mod_tools::ensure_layout::get_struct_size(attr) {
-                        Ok(v) => v,
-                        Err(_) => None
-                    };
-                    // explicit_layout = true;
+                    explicit_size = riri_mod_tools::ensure_layout::get_struct_size(attr).unwrap_or_else(|_| None);
                 }
             }
             if repr {
                 if let syn::Fields::Named(f) = &t.fields {
                     let struct_name = t.ident.to_string();
-                    let fields = collect_fields(f);
+                    let fields = collect_fields(f, ptr_as_nint);
                     result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
                 } else if let syn::Fields::Unnamed(f) = &t.fields {
                     let struct_name = t.ident.to_string();
-                    let fields = collect_fields_unnamed(f);
+                    let fields = collect_fields_unnamed(f, ptr_as_nint);
                     result.push(RustStruct { struct_name, fields, explicit_size, is_union: false });
                 } else if let syn::Fields::Unit = &t.fields {
                     let struct_name = t.ident.to_string();
@@ -238,7 +234,7 @@ pub fn collect_struct(ast: &syn::File, result: &mut Vec<RustStruct>) {
     }
 }
 
-fn collect_fields(fields: &syn::FieldsNamed) -> Vec<FieldMember> {
+fn collect_fields(fields: &syn::FieldsNamed, ptr_as_nint: bool) -> Vec<FieldMember> {
     let mut result = Vec::new();
 
     for field in &fields.named {
@@ -252,7 +248,7 @@ fn collect_fields(fields: &syn::FieldsNamed) -> Vec<FieldMember> {
                     };
                 }
             }
-            let t = parse_type(&field.ty);
+            let t = parse_type(&field.ty, ptr_as_nint);
             result.push(FieldMember {
                 name: x.to_string(),
                 rust_type: t,
@@ -264,14 +260,14 @@ fn collect_fields(fields: &syn::FieldsNamed) -> Vec<FieldMember> {
     result
 }
 
-fn collect_fields_unnamed(fields: &syn::FieldsUnnamed) -> Vec<FieldMember> {
+fn collect_fields_unnamed(fields: &syn::FieldsUnnamed, ptr_as_nint: bool) -> Vec<FieldMember> {
     let mut result = Vec::new();
 
     let mut i = 0;
     for field in &fields.unnamed {
         i += 1;
         let name = format!("Item{i}");
-        let t = parse_type(&field.ty);
+        let t = parse_type(&field.ty, ptr_as_nint);
         result.push(FieldMember {
             name,
             rust_type: t,
@@ -286,13 +282,14 @@ pub fn collect_const(
     ast: &syn::File,
     result: &mut Vec<RustConst>,
     filter: fn(const_name: &str) -> bool,
+    ptr_as_nint: bool,
 ) {
     for item in depth_first_module_walk(&ast.items) {
         if let Item::Const(ct) = item {
             // pub const Ident: ty = expr
             let const_name = ct.ident.to_string();
             if filter(const_name.as_str()) {
-                let t = parse_type(&ct.ty);
+                let t = parse_type(&ct.ty, ptr_as_nint);
 
                 if let syn::Expr::Lit(lit_expr) = &*ct.expr {
                     let value = match &lit_expr.lit {
@@ -471,9 +468,15 @@ pub fn reduce_enum(
     result
 }
 
-fn parse_type(t: &syn::Type) -> RustType {
+fn parse_type(t: &syn::Type, ptr_as_nint: bool) -> RustType {
     match t {
         syn::Type::Ptr(t) => {
+            if ptr_as_nint {
+                return RustType {
+                    type_name: "isize".to_string(),
+                    type_kind: TypeKind::Normal
+                }
+            }
             let has_const = t.const_token.is_some(); // not is has_mut
 
             if let syn::Type::Path(path) = &*t.elem {
@@ -485,7 +488,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                         } else {
                             PointerType::MutPointer
                         },
-                        Box::new(parse_type_path(path)),
+                        Box::new(parse_type_path(path, ptr_as_nint)),
                     ),
                 };
             } else if let syn::Type::Ptr(t) = &*t.elem {
@@ -501,13 +504,13 @@ fn parse_type(t: &syn::Type) -> RustType {
 
                     return RustType {
                         type_name: path.path.segments.last().unwrap().ident.to_string(),
-                        type_kind: TypeKind::Pointer(pointer_type, Box::new(parse_type_path(path))),
+                        type_kind: TypeKind::Pointer(pointer_type, Box::new(parse_type_path(path, ptr_as_nint))),
                     };
                 }
             }
         }
         syn::Type::Path(t) => {
-            return parse_type_path(t);
+            return parse_type_path(t, ptr_as_nint);
         }
         syn::Type::Array(t) => {
             let mut digits = "".to_string();
@@ -517,7 +520,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                 }
             };
 
-            let type_name = parse_type(&t.elem).type_name; // maybe ok, only retrieve type_name
+            let type_name = parse_type(&t.elem, ptr_as_nint).type_name; // maybe ok, only retrieve type_name
             return RustType {
                 type_name,
                 type_kind: TypeKind::FixedArray(digits, None),
@@ -535,7 +538,7 @@ fn parse_type(t: &syn::Type) -> RustType {
             let mut parameters = Vec::new();
 
             for arg in t.inputs.iter() {
-                let rust_type = parse_type(&arg.ty);
+                let rust_type = parse_type(&arg.ty, ptr_as_nint);
 
                 let name = if let Some((ident, _)) = &arg.name {
                     ident.to_string()
@@ -547,7 +550,7 @@ fn parse_type(t: &syn::Type) -> RustType {
 
             let ret = match &t.output {
                 syn::ReturnType::Default => None,
-                syn::ReturnType::Type(_, t) => Some(Box::new(parse_type(&t))),
+                syn::ReturnType::Type(_, t) => Some(Box::new(parse_type(&t, ptr_as_nint))),
             };
 
             return RustType {
@@ -556,7 +559,13 @@ fn parse_type(t: &syn::Type) -> RustType {
             };
         }
         syn::Type::Reference(t) => {
-            let result = parse_type(&*t.elem);
+            if ptr_as_nint {
+                return RustType {
+                    type_name: "isize".to_string(),
+                    type_kind: TypeKind::Normal
+                }
+            }
+            let result = parse_type(&*t.elem, ptr_as_nint);
             let is_mut = t.mutability.is_some();
 
             match result {
@@ -573,7 +582,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                                 } else {
                                     PointerType::ConstPointer
                                 },
-                                Box::new(parse_type(&*t.elem)),
+                                Box::new(parse_type(&*t.elem, ptr_as_nint)),
                             ),
                         };
                     }
@@ -586,7 +595,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                                 } else {
                                     PointerType::ConstPointerPointer
                                 },
-                                Box::new(parse_type(&*t.elem)),
+                                Box::new(parse_type(&*t.elem, ptr_as_nint)),
                             ),
                         };
                     }
@@ -599,7 +608,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                                 } else {
                                     PointerType::ConstMutPointerPointer
                                 },
-                                Box::new(parse_type(&*t.elem)),
+                                Box::new(parse_type(&*t.elem, ptr_as_nint)),
                             ),
                         };
                     }
@@ -611,7 +620,7 @@ fn parse_type(t: &syn::Type) -> RustType {
                         type_name: result.type_name,
                         type_kind: TypeKind::Pointer(
                             PointerType::ConstPointer,
-                            Box::new(parse_type(&*t.elem)),
+                            Box::new(parse_type(&*t.elem, ptr_as_nint)),
                         ),
                     };
                 }
@@ -627,12 +636,12 @@ fn parse_type(t: &syn::Type) -> RustType {
     }
 }
 
-fn parse_type_path(t: &syn::TypePath) -> RustType {
+fn parse_type_path(t: &syn::TypePath, ptr_as_nint: bool) -> RustType {
     let last_segment = t.path.segments.last().unwrap();
     if let syn::PathArguments::AngleBracketed(x) = &last_segment.arguments {
         // generics
         if let Some(syn::GenericArgument::Type(t)) = x.args.first() {
-            let rust_type = parse_type(t);
+            let rust_type = parse_type(t, ptr_as_nint);
             if last_segment.ident == "Option" {
                 return RustType {
                     type_name: "Option".to_string(),

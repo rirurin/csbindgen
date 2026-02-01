@@ -8,6 +8,7 @@ impl<'a> AssemblyFunctionHook<'a> {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct AssemblyFunctionHookData<'a> {
     pub(crate) suffix: String,
     pub(crate) execute_mode: &'a str,

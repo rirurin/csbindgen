@@ -44,10 +44,11 @@ pub(crate) fn generate(
             GenerateKind::InputBindgen => collect_foreign_method(&file_ast, options, &mut methods),
             GenerateKind::InputExtern => collect_extern_method(&file_ast, options, &mut methods),
         };
-        collect_type_alias(&file_ast, &mut aliases);
-        collect_struct(&file_ast, &mut structs);
+        collect_type_alias(&file_ast, &mut aliases, options.treat_pointer_types_as_nint);
+        collect_struct(&file_ast, &mut structs, options.treat_pointer_types_as_nint);
         collect_enum(&file_ast, &mut enums);
-        collect_const(&file_ast, &mut consts,options.csharp_generate_const_filter); 
+        collect_const(&file_ast, &mut consts, options.csharp_generate_const_filter,
+            options.treat_pointer_types_as_nint);
     };
 
     for path in paths {
